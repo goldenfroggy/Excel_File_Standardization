@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.core.config import AppSettings, ROOT
+from app.core.config import AppSettings, ROOT, _platform_path
 from app.core.matcher import match_columns
 from app.core.models import FileReport
 from app.core.presets import PresetStore
@@ -452,7 +452,8 @@ class MainWindow(QWidget):
         if self.file_list.count() == 0:
             QMessageBox.information(self, "Chú ý", "Thêm ít nhất 1 file nguồn.")
             return
-        out_dir = Path(self.output_edit.text().strip() or ROOT / "output")
+        raw_out = self.output_edit.text().strip() or str(ROOT / "output")
+        out_dir = Path(_platform_path(raw_out))
         try:
             out_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:

@@ -17,6 +17,24 @@ SETTINGS_PATH = CONFIG_DIR / "settings.json"
 
 _PATH_FIELDS = ("last_template", "last_output_dir", "templates_dir")
 
+# Any of these spellings means "the local AI endpoint" and gets rewritten to the
+# platform-correct one on load (Windows 127.0.0.1, WSL gateway IP).
+_LOCAL_AI_URLS = (
+    "http://127.0.0.1:20128/v1",
+    "http://localhost:20128/v1",
+    "http://127.0.0.1:20128",
+    "http://localhost:20128",
+    DEFAULT_BASE_URL,
+    DEFAULT_BASE_URL.rstrip("/v1"),
+)
+
+
+def _normalize_ai_base_url(url: str) -> str:
+    norm = url.rstrip("/")
+    if norm in _LOCAL_AI_URLS:
+        return default_base_url()
+    return url
+
 
 def _to_wsl_posix(path: str) -> str:
     """Normalize any /mnt/x/..., \\mnt\\x\\... form to /mnt/x/... (POSIX)."""
@@ -78,9 +96,9 @@ class AppSettings:
         settings = cls()
         if "ai" in data:
             settings.ai = AIConfig(**data["ai"])
-        # A URL saved on WSL (gateway IP) must become localhost when run on Windows.
-        if os.name == "nt" and settings.ai.base_url == DEFAULT_BASE_URL:
-            settings.ai.base_url = default_base_url()
+        # Any "local endpoint" spelling (localhost / 127.0.0.1 / WSL gateway)
+        # must become the platform-correct one for this run.
+        settings.ai.base_url = _normalize_ai_base_url(settings.ai.base_url)
         if "clean" in data:
             settings.clean = CleanRules(**data["clean"])
         for k in _PATH_FIELDS:
