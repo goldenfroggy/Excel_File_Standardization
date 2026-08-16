@@ -1,0 +1,15 @@
+.venv/
+.venv-win/
+__pycache__/
+*.pyc
+.pytest_cache/
+config/settings.json
+config/ai_cache.json
+config/presets.json
+config/synonyms.json
+tests/samples/
+output/
+templates/*
+!templates/.gitkeep
+*.standardized.xlsx
+.DS_Store
