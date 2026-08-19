@@ -13,3 +13,6 @@ templates/*
 !templates/.gitkeep
 *.standardized.xlsx
 .DS_Store
+
+
+opencode.json
