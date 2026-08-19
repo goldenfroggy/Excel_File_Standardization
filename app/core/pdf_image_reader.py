@@ -143,17 +143,31 @@ def _pdfplumber_extract(path: Path) -> pd.DataFrame | None:
                 if len(extracted) < 2:
                     continue
                 
-                # Check if transposed: first column has field names
+                # Check if transposed: first column has field names, other columns are records
+                # Transposed table: first column = field names (headers), each other column = one record
                 first_col = [r[0] for r in extracted if r]
-                other_col_lens = []
                 max_cols = max(len(r) for r in extracted)
+                
+                # Check if first column has text-like values (field names) and 
+                # other columns have similar row counts (each column is a record)
+                other_col_lens = []
                 for c in range(1, max_cols):
                     cnt = sum(1 for r in extracted if c < len(r) and r[c])
                     other_col_lens.append(cnt)
                 
+                # Transposed if: first column has >2 values AND 
+                # other columns have similar counts to first column (each column is a record)
                 avg_other = sum(other_col_lens) / len(other_col_lens) if other_col_lens else 0
-                if len(first_col) > avg_other * 2 and len(first_col) > 2:
-                    # Transposed table
+                # Key insight: in transposed table, first_col count ≈ other_col counts
+                # (each column is a record with one value per field)
+                is_transposed = (
+                    len(first_col) > 2 and 
+                    other_col_lens and
+                    abs(len(first_col) - avg_other) <= 2  # similar row counts
+                )
+                
+                if is_transposed:
+                    # Transpose: field names become column headers, each data column becomes a row
                     field_names = first_col
                     records = []
                     for c in range(1, max_cols):
