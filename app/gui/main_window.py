@@ -42,7 +42,7 @@ from app.core.reader import (
 )
 from app.core.synonyms import SynonymStore
 from app.core.type_inference import infer_column_type
-from app.core.template import load_template
+from app.core.template import load_template, meta_path
 from app.gui.mapping_dialog import MappingDialog
 from app.gui.report_dialog import ReportDialog
 from app.gui.settings_dialog import SettingsDialog
@@ -115,16 +115,25 @@ class MainWindow(QWidget):
         row = QHBoxLayout()
         box = QGroupBox("1. Chọn mẫu (template)")
         inner = QHBoxLayout(box)
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Tìm mẫu…")
+        self.search_edit.setMaximumWidth(180)
+        self.search_edit.textChanged.connect(self._filter_templates)
         self.template_combo = QComboBox()
         self.template_combo.currentIndexChanged.connect(self._on_template_changed)
+        self.template_combo.activated.connect(self._clear_search)
         import_btn = QPushButton("Thêm mẫu mới…")
         import_btn.clicked.connect(self._import_template)
+        self.delete_btn = QPushButton("Xoá mẫu…")
+        self.delete_btn.clicked.connect(self._delete_template)
         meta_btn = QPushButton("Thuộc tính cột mẫu…")
         meta_btn.clicked.connect(self._edit_meta)
         self.template_preview = QLabel()
         self.template_preview.setWordWrap(True)
+        inner.addWidget(self.search_edit)
         inner.addWidget(self.template_combo, 3)
         inner.addWidget(import_btn)
+        inner.addWidget(self.delete_btn)
         inner.addWidget(meta_btn)
         inner.addWidget(self.template_preview, 2)
         row.addWidget(box, 1)
@@ -238,6 +247,50 @@ class MainWindow(QWidget):
             if idx >= 0:
                 self.template_combo.setCurrentIndex(idx)
 
+    def _filter_templates(self, text: str) -> None:
+        """Rebuild combo showing only templates whose name contains *text*."""
+        current_data = self.template_combo.currentData()
+        self.template_combo.blockSignals(True)
+        self.template_combo.clear()
+        low = text.strip().lower()
+        for path in sorted(self.template_dir.rglob("*.xlsx")) + sorted(
+            self.template_dir.rglob("*.xls")
+        ) + sorted(self.template_dir.rglob("*.csv")):
+            if low and low not in path.name.lower():
+                continue
+            self.template_combo.addItem(path.name, str(path))
+        idx = self.template_combo.findData(current_data)
+        if idx >= 0:
+            self.template_combo.setCurrentIndex(idx)
+        self.template_combo.blockSignals(False)
+        self._on_template_changed()
+
+    def _delete_template(self) -> None:
+        """Delete the selected template file and its metadata."""
+        data = self.template_combo.currentData()
+        if not data:
+            return
+        path = Path(data)
+        name = path.name
+        reply = QMessageBox.question(
+            self, "Xoá mẫu",
+            f"Xoá vĩnh viễn mẫu \"{name}\"?\n"
+            f"File \"{name}\" và file metadata sẽ bị xoá.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            path.unlink(missing_ok=True)
+            mp = meta_path(path)
+            mp.unlink(missing_ok=True)
+        except OSError as exc:
+            QMessageBox.critical(self, "Lỗi", str(exc))
+            return
+        self.search_edit.clear()
+        self._refresh_templates()
+
     def _on_template_changed(self) -> None:
         self.current_template = None
         self.override = None
@@ -253,6 +306,9 @@ class MainWindow(QWidget):
             QMessageBox.critical(self, "Lỗi đọc mẫu", str(exc))
             return
         self._sync_template_ui()
+
+    def _clear_search(self) -> None:
+        self.search_edit.clear()
 
     def _sync_template_ui(self) -> None:
         if self.current_template:
@@ -279,6 +335,7 @@ class MainWindow(QWidget):
         except OSError as exc:
             QMessageBox.critical(self, "Lỗi", str(exc))
             return
+        self.search_edit.clear()
         self._refresh_templates()
         idx = self.template_combo.findData(str(dest))
         if idx >= 0:
