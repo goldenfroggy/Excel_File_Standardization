@@ -5,13 +5,27 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .ai_matcher import AIConfig, DEFAULT_BASE_URL, default_base_url, default_cache_path
 from .cleaner import CleanRules
 
-ROOT = Path(__file__).resolve().parents[2]
+
+def _app_root() -> Path:
+    """Return the application root directory.
+
+    When frozen (PyInstaller exe), ``sys.executable`` lives next to the app
+    folder so we use its parent.  During normal Python execution we resolve
+    from this source file.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).resolve().parents[2]
+
+
+ROOT = _app_root()
 CONFIG_DIR = ROOT / "config"
 SETTINGS_PATH = CONFIG_DIR / "settings.json"
 

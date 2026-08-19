@@ -40,6 +40,7 @@ from app.core.reader import (
     read_frame_head,
     sample_values,
 )
+from app.core.pdf_image_reader import is_document
 from app.core.synonyms import SynonymStore
 from app.core.type_inference import infer_column_type
 from app.core.template import load_template, meta_path
@@ -359,7 +360,10 @@ class MainWindow(QWidget):
 
     def _add_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
-            self, "Chọn file nguồn", "", "Excel/CSV (*.xlsx *.xls *.csv)"
+            self,
+            "Chọn file nguồn",
+            "",
+            "Excel/CSV/PDF/Hình ảnh (*.xlsx *.xls *.csv *.pdf *.jpg *.jpeg *.png *.bmp *.tiff)",
         )
         self._append_files(paths)
 
@@ -368,7 +372,8 @@ class MainWindow(QWidget):
         if not folder:
             return
         paths = []
-        for pattern in ("*.xlsx", "*.xls", "*.csv"):
+        for pattern in ("*.xlsx", "*.xls", "*.csv", "*.pdf",
+                        "*.jpg", "*.jpeg", "*.png", "*.bmp", "*.tiff", "*.tif"):
             paths.extend(str(p) for p in Path(folder).glob(pattern))
         self._append_files(paths)
 
@@ -386,14 +391,21 @@ class MainWindow(QWidget):
             return
         path = Path(self.file_list.item(0).text())
         try:
-            sheet = self.sheet_combo.currentData()
-            raw = read_frame(path, sheet_name=sheet)
-            idx = detect_header_row(_read_head(path, sheet))
-            preview = [str(v) for v in list(raw.iloc[0].tolist())[:6]]
-            self.header_info.setText(
-                f"Phát hiện header dòng {idx + 1}; dữ liệu đầu: "
-                + " | ".join(preview)
-            )
+            if is_document(path):
+                df = read_frame(path)
+                preview = [str(v) for v in list(df.columns)[:6]]
+                self.header_info.setText(
+                    f"Tự phát hiện cột ({len(df.columns)} cột): " + " | ".join(preview)
+                )
+            else:
+                sheet = self.sheet_combo.currentData()
+                raw = read_frame(path, sheet_name=sheet)
+                idx = detect_header_row(_read_head(path, sheet))
+                preview = [str(v) for v in list(raw.iloc[0].tolist())[:6]]
+                self.header_info.setText(
+                    f"Phát hiện header dòng {idx + 1}; dữ liệu đầu: "
+                    + " | ".join(preview)
+                )
         except Exception:
             self.header_info.setText("Không đọc được header tự động.")
 
@@ -416,8 +428,14 @@ class MainWindow(QWidget):
             return
         first = Path(self.file_list.item(0).text())
         try:
-            for s in list_sheets(first):
-                self.sheet_combo.addItem(s, s)
+            if is_document(first):
+                self.sheet_combo.clear()
+                self.sheet_combo.addItem("(Tự phát hiện)", None)
+                self.sheet_combo.setEnabled(False)
+            else:
+                self.sheet_combo.setEnabled(True)
+                for s in list_sheets(first):
+                    self.sheet_combo.addItem(s, s)
         except Exception:
             pass
 
