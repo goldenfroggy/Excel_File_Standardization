@@ -126,11 +126,14 @@ def process_file(
 ) -> FileReport:
     report = FileReport(source_path=source, output_path=None, status="failed")
     try:
-        if sheet_name is None:
-            from .reader import pick_best_sheet
-
-            sheet_name = pick_best_sheet(source)
-        df = read_frame(source, sheet_name=sheet_name, skip_rows=skip_rows)
+        from .pdf_image_reader import is_document, read_document as _read_doc
+        if is_document(source):
+            df = _read_doc(source, settings.ai)
+        else:
+            if sheet_name is None:
+                from .reader import pick_best_sheet
+                sheet_name = pick_best_sheet(source)
+            df = read_frame(source, sheet_name=sheet_name, skip_rows=skip_rows)
         if df.empty:
             raise ValueError("File không có dữ liệu")
 
