@@ -148,12 +148,18 @@ class MainWindow(QWidget):
         btns = QHBoxLayout()
         add_files = QPushButton("Thêm file…")
         add_folder = QPushButton("Thêm thư mục…")
-        remove_btn = QPushButton("Bỏ chọn")
+        select_all_btn = QPushButton("Chọn tất cả")
+        deselect_all_btn = QPushButton("Bỏ chọn tất cả")
+        remove_btn = QPushButton("Xoá")
         add_files.clicked.connect(self._add_files)
         add_folder.clicked.connect(self._add_folder)
+        select_all_btn.clicked.connect(self._select_all_files)
+        deselect_all_btn.clicked.connect(self._deselect_all_files)
         remove_btn.clicked.connect(self._remove_selected)
         btns.addWidget(add_files)
         btns.addWidget(add_folder)
+        btns.addWidget(select_all_btn)
+        btns.addWidget(deselect_all_btn)
         btns.addWidget(remove_btn)
         btns.addStretch()
         btns.addWidget(QLabel("Sheet:"))
@@ -390,6 +396,12 @@ class MainWindow(QWidget):
             )
         except Exception:
             self.header_info.setText("Không đọc được header tự động.")
+
+    def _select_all_files(self) -> None:
+        self.file_list.selectAll()
+
+    def _deselect_all_files(self) -> None:
+        self.file_list.clearSelection()
 
     def _remove_selected(self) -> None:
         for item in self.file_list.selectedItems():
