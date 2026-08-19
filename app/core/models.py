@@ -28,6 +28,8 @@ class IssueType(str, Enum):
     MISSING_VALUE = "missing_value"
     BAD_FORMAT = "bad_format"
     EXTRA_COLUMN = "extra_column"
+    OCR_FAILED = "ocr_failed"
+    PDF_PARSE_ERROR = "pdf_parse_error"
     UNMAPPED_COLUMN = "unmapped_column"
     DUPLICATE_HEADER = "duplicate_header"
 

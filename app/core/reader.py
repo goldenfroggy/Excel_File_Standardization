@@ -8,7 +8,9 @@ from typing import Any
 
 import pandas as pd
 
-SUPPORTED_EXTS = {".xlsx", ".xlsm", ".xls", ".csv"}
+SUPPORTED_EXTS = {".xlsx", ".xlsm", ".xls", ".csv",
+                  ".pdf", ".jpg", ".jpeg", ".png",
+                  ".bmp", ".tiff", ".tif", ".webp"}
 DEFAULT_MAX_SCAN = 15
 HEAD_ROWS = 60
 
@@ -26,6 +28,9 @@ def _engine_for(path: Path) -> str | None:
 
 def list_sheets(path: Path) -> list[str]:
     """List sheet names of an Excel workbook."""
+    from .pdf_image_reader import is_document
+    if is_document(path):
+        return ["Nội dung"]
     suffix = path.suffix.lower()
     if suffix in {".xlsx", ".xlsm", ".xls"}:
         try:
@@ -208,6 +213,10 @@ def read_frame_head(
     encoding: str = "utf-8-sig",
 ) -> list[str]:
     """Return the header row (column names) of a file."""
+    from .pdf_image_reader import is_document, read_document
+    if is_document(path):
+        df = read_document(path)
+        return list(df.columns)
     head = _read_head(path, sheet_name)
     if detect_transpose(head):
         trans = _read_transposed(path, sheet_name)
@@ -238,6 +247,9 @@ def read_frame(
     encoding: str = "utf-8-sig",
 ) -> pd.DataFrame:
     """Read a file into a DataFrame using the detected header row."""
+    from .pdf_image_reader import is_document, read_document
+    if is_document(path):
+        return read_document(path)
     head = _read_head(path, sheet_name)
     if detect_transpose(head):
         return _read_transposed(path, sheet_name)
