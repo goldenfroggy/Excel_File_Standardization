@@ -18,6 +18,7 @@ import logging
 import math
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -317,6 +318,12 @@ def _read_image(path: Path, ai_config=None) -> pd.DataFrame:
 def _ocr_numpy(img_array) -> pd.DataFrame | None:
     """Run rapidocr on a numpy image and convert to DataFrame."""
     from rapidocr_onnxruntime import RapidOCR
+    from PIL import Image
+
+    # Handle RGBA/LA/PA images by converting to RGB
+    if img_array.ndim == 3 and img_array.shape[2] == 4:
+        img = Image.fromarray(img_array).convert("RGB")
+        img_array = np.array(img)
 
     ocr = RapidOCR()
     result, _ = ocr(img_array)
@@ -328,17 +335,14 @@ def _ocr_numpy(img_array) -> pd.DataFrame | None:
 def _ocr_result_to_df(result: list) -> pd.DataFrame:
     """Convert rapidocr output [(bbox, text, confidence), ...] to a DataFrame.
 
-    Table detection heuristic:
-      - Group text regions by Y-coordinate → rows
-      - Within each row, sort by X-coordinate
-      - First row becomes column headers
-      - Detect transposed tables (field names in first column)
+    Strategy: group text regions by Y-coordinate into rows, merge adjacent
+    words in each row, then detect if the table is transposed (field names
+    in first column → transpose to normal format).
     """
     items = []
     for bbox, text, conf in result:
         if not text or not text.strip():
             continue
-        # bbox is [[x1,y1],[x2,y2],[x3,y3],[x4,y4]]
         x_min = min(p[0] for p in bbox)
         y_min = min(p[1] for p in bbox)
         y_max = max(p[1] for p in bbox)
@@ -348,110 +352,104 @@ def _ocr_result_to_df(result: list) -> pd.DataFrame:
     if not items:
         return None
 
-    # Try normal table detection first
-    df = _try_normal_table(items)
-    if df is not None and not df.empty:
-        return df
-
-    # Try transposed table detection
-    df = _try_transposed_table(items)
-    if df is not None and not df.empty:
-        return df
-
-    return None
-
-
-def _try_normal_table(items: list[dict]) -> pd.DataFrame | None:
-    """Try to build a normal table (header row + data rows)."""
-    items.sort(key=lambda it: it["y"])
-    rows: list[list[dict]] = []
-    current_row: list[dict] = [items[0]]
-    row_tolerance = max(it["h"] for it in items) * 0.6 if items else 10
-
-    for item in items[1:]:
-        if abs(item["y"] - current_row[-1]["y"]) <= row_tolerance:
-            current_row.append(item)
-        else:
-            rows.append(sorted(current_row, key=lambda it: it["x"]))
-            current_row = [item]
-    rows.append(sorted(current_row, key=lambda it: it["x"]))
-
+    # Group items into rows by Y-coordinate, merging adjacent words
+    rows = _group_items_into_rows(items)
     if not rows:
         return None
 
-    # Need at least 2 rows (header + 1 data) and reasonable column count
-    if len(rows) < 2 or len(rows[0]) < 2:
+    # Build grid: each row is a list of merged cell texts
+    grid = []
+    for row_items in rows:
+        grid.append([it["text"] for it in row_items])
+
+    # Skip obvious non-data rows (Sheet1, Page 1, etc.) but keep single-cell rows
+    grid = [r for r in grid if r and r[0] not in ("Sheet1", "Page 1", "Page")]
+    if len(grid) < 2:
         return None
 
-    # First row → headers
-    header = [cell["text"] for cell in rows[0]]
-    data = []
-    for row in rows[1:]:
-        data.append([cell["text"] for cell in row])
+    # Check if transposed: first column has field names, other columns are records
+    max_cols = max(len(r) for r in grid)
+    if max_cols >= 3:
+        first_col = [r[0] for r in grid if r[0]]
+        other_lens = []
+        for c in range(1, max_cols):
+            cnt = sum(1 for r in grid if c < len(r) and r[c])
+            other_lens.append(cnt)
+        avg_other = sum(other_lens) / len(other_lens) if other_lens else 0
+        if len(first_col) >= 3 and avg_other >= 1 and len(first_col) > avg_other:
+            # Transposed: first column = field names, each remaining column = a record
+            field_names = first_col
+            records = []
+            for c in range(1, max_cols):
+                record = {}
+                for i, field in enumerate(field_names):
+                    if i < len(grid) and c < len(grid[i]):
+                        record[field] = grid[i][c]
+                if any(v for v in record.values() if v):
+                    records.append(record)
+            if records:
+                return pd.DataFrame(records)
 
+    # Normal table: first row with >= 2 cells = header
+    header_row_idx = next((i for i, r in enumerate(grid) if len(r) >= 2), None)
+    if header_row_idx is None:
+        return None
+    header = grid[header_row_idx]
+    data = grid[header_row_idx + 1:]
     if not data:
         return None
-
-    # Pad rows to match header length
     ncols = len(header)
     data = [r[:ncols] + [None] * (ncols - len(r)) for r in data]
     return pd.DataFrame(data, columns=header)
 
 
-def _try_transposed_table(items: list[dict]) -> pd.DataFrame | None:
-    """Try to build a transposed table (field names in first column).
+def _group_items_into_rows(items: list[dict]) -> list[list[dict]]:
+    """Group OCR items into rows by Y-coordinate, merging nearby words."""
+    items = sorted(items, key=lambda it: it["y"])
+    median_h = sorted(it["h"] for it in items)[len(items) // 2] if items else 25
+    row_tolerance = median_h * 0.8
 
-    Expected structure:
-      Row 0: Field1  Value1  Value2  Value3 ...
-      Row 1: Field2  Value1  Value2  Value3 ...
-      Row 2: Field3  Value1  Value2  Value3 ...
-    """
-    if len(items) < 4:  # Need at least 2 fields + 2 values
-        return None
-
-    # Sort by X first (columns), then Y (rows)
-    items.sort(key=lambda it: (it["x"], it["y"]))
-
-    # Group by X-coordinate → columns
-    cols: list[list[dict]] = []
-    current_col: list[dict] = [items[0]]
-    col_tolerance = max(it["h"] for it in items) * 0.8 if items else 20
+    raw_rows: list[list[dict]] = []
+    current_row: list[dict] = [items[0]]
 
     for item in items[1:]:
-        if abs(item["x"] - current_col[-1]["x"]) <= col_tolerance:
-            current_col.append(item)
+        if abs(item["y"] - current_row[-1]["y"]) <= row_tolerance:
+            current_row.append(item)
         else:
-            cols.append(sorted(current_col, key=lambda it: it["y"]))
-            current_col = [item]
-    cols.append(sorted(current_col, key=lambda it: it["y"]))
+            raw_rows.append(sorted(current_row, key=lambda it: it["x"]))
+            current_row = [item]
+    raw_rows.append(sorted(current_row, key=lambda it: it["x"]))
 
-    # Need at least 2 columns and first column has multiple rows
-    if len(cols) < 2 or len(cols[0]) < 2:
-        return None
+    # Merge adjacent words within each row (gap < threshold → same cell)
+    merged_rows = []
+    for row_items in raw_rows:
+        if len(row_items) <= 1:
+            merged_rows.append(row_items)
+            continue
 
-    # First column = field names (headers for transposed table)
-    field_names = [cell["text"] for cell in cols[0]]
-    # Remaining columns = records
-    n_records = len(cols) - 1
+        merged = []
+        current_cells = [row_items[0]]
 
-    # Check if all value columns have same length as field names
-    valid = True
-    for c in cols[1:]:
-        if len(c) != len(cols[0]):
-            valid = False
-            break
-    if not valid:
-        return None
+        for it in row_items[1:]:
+            prev = current_cells[-1]
+            gap = it["x"] - prev["x"]
+            # Words close together (gap < 1.5x median height) belong to same cell
+            if gap < median_h * 1.5:
+                current_cells.append(it)
+            else:
+                text = " ".join(c["text"] for c in current_cells)
+                merged.append({"x": current_cells[0]["x"], "y": current_cells[0]["y"],
+                               "h": current_cells[0]["h"], "text": text})
+                current_cells = [it]
 
-    # Build DataFrame: each record is a row, fields are columns
-    data = []
-    for record_idx in range(n_records):
-        row = {}
-        for field_idx, field_name in enumerate(field_names):
-            row[field_name] = cols[record_idx + 1][field_idx]["text"]
-        data.append(row)
+        text = " ".join(c["text"] for c in current_cells)
+        merged.append({"x": current_cells[0]["x"], "y": current_cells[0]["y"],
+                       "h": current_cells[0]["h"], "text": text})
 
-    return pd.DataFrame(data)
+        if merged:
+            merged_rows.append(merged)
+
+    return merged_rows
 
 
 # ── AI vision ───────────────────────────────────────────────────────────
